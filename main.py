@@ -150,8 +150,6 @@ def user_analytics_keyboard(user_id):
 
 def rate_photo_keyboard(user_id):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Оценить", callback_data=f"rate_approve_{user_id}"),
-         InlineKeyboardButton("⏭ Пропустить", callback_data=f"rate_skip_{user_id}")],
         [InlineKeyboardButton("💬 Комментарий", callback_data=f"rate_comment_{user_id}")]
     ])
 
@@ -326,18 +324,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         blocked_users.discard(target_id)
         await context.bot.send_message(target_id, "✅ Вы разблокированы в боте.")
         await query.edit_message_text("✅ Пользователь разблокирован.", reply_markup=user_analytics_keyboard(target_id))
-    
-    elif data.startswith("rate_approve_"):
-        target_id = int(data.split("_")[-1])
-        user_states[ADMIN_ID] = f'writing_rate_{target_id}'
-        await query.edit_message_text(
-            f"✍️ Напишите оценку/комментарий для @{user_data_store[target_id].get('username', 'unknown')}:",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])
-        )
-    
-    elif data.startswith("rate_skip_"):
-        target_id = int(data.split("_")[-1])
-        await query.edit_message_text("⏭ Пропущено.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_panel")]]))
     
     elif data.startswith("rate_comment_"):
         target_id = int(data.split("_")[-1])
