@@ -9,11 +9,12 @@ logger = logging.getLogger(__name__)
 
 BOT_TOKEN = "8838352023:AAHl9ZPlNcbmXiARZsMnpzQs0Gxsz4nSjbE"
 ADMIN_ID = 7652381613
-REQUIRED_SCREENSHOTS = 5
+REQUIRED_COMMENTS = 5
 
 user_states = {}
 user_data_store = defaultdict(dict)
 blocked_users = set()
+approved_users = set()
 
 def get_user_info(user):
     return f"👤 {user.full_name} (@{user.username or 'нет username'}) | ID: {user.id}"
@@ -30,14 +31,15 @@ def main_menu_keyboard(user_id=None):
 
 def admin_panel_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Пользователи на проверке", callback_data="admin_pending")],
+        [InlineKeyboardButton("📋 На проверке комментарии", callback_data="admin_pending")],
+        [InlineKeyboardButton("✅ Одобренные", callback_data="admin_approved")],
         [InlineKeyboardButton("📊 Аналитика", callback_data="admin_analytics")],
         [InlineKeyboardButton("🔙 В меню", callback_data="back")]
     ])
 
 def pending_users_keyboard(page=0):
     pending = [(uid, data) for uid, data in user_data_store.items() 
-               if data.get('status') in ('pending_screenshots', 'awaiting_approval') and uid not in blocked_users]
+               if data.get('status') in ('pending_comments', 'awaiting_approval') and uid not in blocked_users]
     per_page = 5
     start = page * per_page
     end = start + per_page
@@ -46,9 +48,9 @@ def pending_users_keyboard(page=0):
     keyboard = []
     for uid, data in page_users:
         username = data.get('username', f'user_{uid}')
-        screenshots_count = len(data.get('screenshots', []))
-        status_text = "⏳" if data.get('status') == 'pending_screenshots' else "📋"
-        keyboard.append([InlineKeyboardButton(f"{status_text} @{username} ({screenshots_count}/5)", callback_data=f"view_user_{uid}")])
+        comments_count = len(data.get('comment_screenshots', []))
+        status_text = "⏳" if data.get('status') == 'pending_comments' else "📋"
+        keyboard.append([InlineKeyboardButton(f"{status_text} @{username} ({comments_count}/5)", callback_data=f"view_user_{uid}")])
     
     nav = []
     if page > 0:
@@ -61,8 +63,32 @@ def pending_users_keyboard(page=0):
     keyboard.append([InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_panel")])
     return InlineKeyboardMarkup(keyboard)
 
+def approved_users_keyboard(page=0):
+    approved = [(uid, data) for uid, data in user_data_store.items() 
+                if uid in approved_users and uid not in blocked_users]
+    per_page = 5
+    start = page * per_page
+    end = start + per_page
+    page_users = approved[start:end]
+    
+    keyboard = []
+    for uid, data in page_users:
+        username = data.get('username', f'user_{uid}')
+        keyboard.append([InlineKeyboardButton(f"✅ @{username}", callback_data=f"view_approved_{uid}")])
+    
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"approved_page_{page-1}"))
+    if end < len(approved):
+        nav.append(InlineKeyboardButton("Вперёд ➡️", callback_data=f"approved_page_{page+1}"))
+    if nav:
+        keyboard.append(nav)
+    
+    keyboard.append([InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_panel")])
+    return InlineKeyboardMarkup(keyboard)
+
 def user_screenshots_keyboard(user_id, page=0):
-    screenshots = user_data_store[user_id].get('screenshots', [])
+    screenshots = user_data_store[user_id].get('comment_screenshots', [])
     per_page = 3
     start = page * per_page
     end = start + per_page
@@ -100,7 +126,7 @@ def analytics_keyboard(page=0):
     keyboard = []
     for uid, data in page_users:
         username = data.get('username', f'user_{uid}')
-        status = "🚫" if uid in blocked_users else "✅"
+        status = "🚫" if uid in blocked_users else ("✅" if uid in approved_users else "⏳")
         keyboard.append([InlineKeyboardButton(f"{status} @{username}", callback_data=f"analytics_user_{uid}")])
     
     nav = []
@@ -122,18 +148,11 @@ def user_analytics_keyboard(user_id):
         [InlineKeyboardButton("🔙 К списку", callback_data="admin_analytics")]
     ])
 
-def admin_photo_keyboard(user_id):
+def rate_photo_keyboard(user_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Оценить", callback_data=f"rate_approve_{user_id}"),
          InlineKeyboardButton("⏭ Пропустить", callback_data=f"rate_skip_{user_id}")],
         [InlineKeyboardButton("💬 Комментарий", callback_data=f"rate_comment_{user_id}")]
-    ])
-
-def admin_approval_keyboard(user_id):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user_id}"),
-         InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{user_id}")],
-        [InlineKeyboardButton("💬 Комментарий", callback_data=f"comment_{user_id}")]
     ])
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -163,8 +182,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id in blocked_users:
             await query.edit_message_text("🚫 Вы заблокированы.")
             return
-        user_states[user_id] = 'waiting_photo'
-        await query.edit_message_text("📸 Отправьте фото для рейта")
+        
+        if user_id not in approved_users:
+            user_states[user_id] = 'waiting_comments'
+            user_data_store[user_id]['comment_screenshots'] = []
+            user_data_store[user_id]['status'] = 'pending_comments'
+            
+            await query.edit_message_text(
+                f"📝 Условие для получения рейта:\n\n"
+                f"Оставьте {REQUIRED_COMMENTS} комментариев в TikTok/Instagram с рекламой бота.\n"
+                f"Пришлите скриншоты каждого комментария (всего {REQUIRED_COMMENTS}).\n\n"
+                f"После проверки админом вам откроется доступ к рейту."
+            )
+        else:
+            user_states[user_id] = 'waiting_rate_photo'
+            await query.edit_message_text("📸 Отправьте фото для рейта")
     
     elif data == "leaderboard":
         await query.edit_message_text(
@@ -179,16 +211,35 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("👑 Админ-панель", reply_markup=admin_panel_keyboard())
     
     elif data == "admin_pending":
-        await query.edit_message_text("📋 Пользователи на проверке:", reply_markup=pending_users_keyboard())
+        await query.edit_message_text("📋 Пользователи на проверке комментариев:", reply_markup=pending_users_keyboard())
     
     elif data.startswith("pending_page_"):
         page = int(data.split("_")[-1])
         await query.edit_message_text("📋 Пользователи на проверке:", reply_markup=pending_users_keyboard(page))
     
+    elif data == "admin_approved":
+        await query.edit_message_text("✅ Одобренные пользователи:", reply_markup=approved_users_keyboard())
+    
+    elif data.startswith("approved_page_"):
+        page = int(data.split("_")[-1])
+        await query.edit_message_text("✅ Одобренные пользователи:", reply_markup=approved_users_keyboard(page))
+    
+    elif data.startswith("view_approved_"):
+        target_id = int(data.split("_")[-1])
+        data_u = user_data_store[target_id]
+        await query.edit_message_text(
+            f"✅ Одобренный пользователь:\n"
+            f"🆔 ID: {target_id}\n"
+            f"👤 Имя: {data_u.get('full_name', '—')}\n"
+            f"🔗 Username: @{data_u.get('username', 'нет')}\n"
+            f"📸 Скриншотов комментариев: {len(data_u.get('comment_screenshots', []))}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К списку", callback_data="admin_approved")]])
+        )
+    
     elif data.startswith("view_user_"):
         target_id = int(data.split("_")[-1])
         await query.edit_message_text(
-            f"📸 Скриншоты от @{user_data_store[target_id].get('username', 'unknown')}:",
+            f"📸 Скриншоты комментариев от @{user_data_store[target_id].get('username', 'unknown')}:",
             reply_markup=user_screenshots_keyboard(target_id)
         )
     
@@ -203,7 +254,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _, _, target_id, idx = data.split("_")
         target_id = int(target_id)
         idx = int(idx)
-        shot = user_data_store[target_id]['screenshots'][idx]
+        shot = user_data_store[target_id]['comment_screenshots'][idx]
         await context.bot.send_photo(
             chat_id=ADMIN_ID,
             photo=shot,
@@ -212,15 +263,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data.startswith("approve_"):
         target_id = int(data.split("_")[-1])
+        approved_users.add(target_id)
         user_data_store[target_id]['status'] = 'approved'
-        await context.bot.send_message(target_id, "✅ Вам дан доступ! Спасибо за выполнение условий.")
-        await query.edit_message_text("✅ Доступ выдан.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К списку", callback_data="admin_pending")]]))
+        await context.bot.send_message(target_id, "✅ Ваши комментарии одобрены! Теперь вы можете получать рейтинг. Нажмите «🎯 Рейт» и отправьте фото.")
+        await query.edit_message_text("✅ Пользователь одобрен.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К списку", callback_data="admin_pending")]]))
     
     elif data.startswith("reject_"):
         target_id = int(data.split("_")[-1])
         user_data_store[target_id]['status'] = 'rejected'
-        await context.bot.send_message(target_id, "❌ Доступ отклонён. Скриншоты не прошли проверку.")
-        await query.edit_message_text("❌ Доступ отклонён.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К списку", callback_data="admin_pending")]]))
+        user_data_store[target_id]['comment_screenshots'] = []
+        user_states[target_id] = 'waiting_comments'
+        await context.bot.send_message(target_id, "❌ Комментарии не прошли проверку. Пришлите новые скриншоты.")
+        await query.edit_message_text("❌ Отклонено. Пользователь должен прислать новые скриншоты.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К списку", callback_data="admin_pending")]]))
     
     elif data.startswith("comment_"):
         target_id = int(data.split("_")[-1])
@@ -232,8 +286,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif data == "admin_analytics":
         total = len([u for u in user_data_store if u != ADMIN_ID])
+        approved_count = len(approved_users)
         await query.edit_message_text(
-            f"📊 Аналитика\n\n👥 Всего пользователей: {total}\n🚫 Заблокировано: {len(blocked_users)}",
+            f"📊 Аналитика\n\n👥 Всего пользователей: {total}\n✅ Одобрено: {approved_count}\n🚫 Заблокировано: {len(blocked_users)}",
             reply_markup=analytics_keyboard()
         )
     
@@ -241,27 +296,28 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         page = int(data.split("_")[-1])
         total = len([u for u in user_data_store if u != ADMIN_ID])
         await query.edit_message_text(
-            f"📊 Аналитика\n\n👥 Всего пользователей: {total}\n🚫 Заблокировано: {len(blocked_users)}",
+            f"📊 Аналитика\n\n👥 Всего пользователей: {total}\n✅ Одобрено: {len(approved_users)}\n🚫 Заблокировано: {len(blocked_users)}",
             reply_markup=analytics_keyboard(page)
         )
     
     elif data.startswith("analytics_user_"):
         target_id = int(data.split("_")[-1])
         data_u = user_data_store[target_id]
-        status = "🚫 Заблокирован" if target_id in blocked_users else "✅ Активен"
+        status = "🚫 Заблокирован" if target_id in blocked_users else ("✅ Одобрен" if target_id in approved_users else "⏳ На проверке")
         await query.edit_message_text(
             f"👤 Пользователь:\n"
             f"🆔 ID: {target_id}\n"
             f"👤 Имя: {data_u.get('full_name', '—')}\n"
             f"🔗 Username: @{data_u.get('username', 'нет')}\n"
             f"📊 Статус: {status}\n"
-            f"📸 Скриншотов: {len(data_u.get('screenshots', []))}",
+            f"📸 Скриншотов: {len(data_u.get('comment_screenshots', []))}",
             reply_markup=user_analytics_keyboard(target_id)
         )
     
     elif data.startswith("block_"):
         target_id = int(data.split("_")[-1])
         blocked_users.add(target_id)
+        approved_users.discard(target_id)
         await context.bot.send_message(target_id, "🚫 Вы заблокированы в боте.")
         await query.edit_message_text("🚫 Пользователь заблокирован.", reply_markup=user_analytics_keyboard(target_id))
     
@@ -290,26 +346,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💬 Напишите комментарий для @{user_data_store[target_id].get('username', 'unknown')}:",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])
         )
-    
-    elif data == "tiktok_done":
-        if user_states.get(user_id) == 'waiting_tiktok':
-            user_states[user_id] = 'waiting_screenshots'
-            user_data_store[user_id]['status'] = 'pending_screenshots'
-            user_data_store[user_id]['screenshots'] = []
-            
-            await query.edit_message_text(
-                f"📸 Теперь отправьте {REQUIRED_SCREENSHOTS} скриншотов комментария в TikTok.\n"
-                f"Пришлите их по одному. Прогресс: 0/{REQUIRED_SCREENSHOTS}"
-            )
-            
-            photo_id = user_data_store[user_id].get('rate_photo')
-            if photo_id:
-                await context.bot.send_photo(
-                    chat_id=ADMIN_ID,
-                    photo=photo_id,
-                    caption=f"📸 Новое фото для рейта\n{get_user_info(update.effective_user)}\n\n⏳ Ожидает скриншотов (0/{REQUIRED_SCREENSHOTS})",
-                    reply_markup=admin_photo_keyboard(user_id)
-                )
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -318,54 +354,64 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     state = user_states.get(user_id)
     
-    if state == 'waiting_photo':
+    if state == 'waiting_comments':
         photo = update.message.photo[-1]
-        user_data_store[user_id]['rate_photo'] = photo.file_id
-        user_states[user_id] = 'waiting_tiktok'
-        
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Я сделал", callback_data="tiktok_done")]])
-        await update.message.reply_text(
-            "📝 Условие: напишите комментарий в TikTok с рекламой бота.\n"
-            "После этого нажмите кнопку ниже.",
-            reply_markup=keyboard
-        )
-    
-    elif state == 'waiting_screenshots':
-        photo = update.message.photo[-1]
-        screenshots = user_data_store[user_id].get('screenshots', [])
+        screenshots = user_data_store[user_id].get('comment_screenshots', [])
         screenshots.append(photo.file_id)
-        user_data_store[user_id]['screenshots'] = screenshots
+        user_data_store[user_id]['comment_screenshots'] = screenshots
         
         count = len(screenshots)
-        remaining = REQUIRED_SCREENSHOTS - count
+        remaining = REQUIRED_COMMENTS - count
         
-        if count < REQUIRED_SCREENSHOTS:
+        if count < REQUIRED_COMMENTS:
             await update.message.reply_text(
-                f"✅ Скриншот принят ({count}/{REQUIRED_SCREENSHOTS}).\n"
+                f"✅ Скриншот принят ({count}/{REQUIRED_COMMENTS}).\n"
                 f"Осталось отправить: {remaining}"
             )
             
-            # Send to admin
             await context.bot.send_photo(
                 chat_id=ADMIN_ID,
                 photo=photo.file_id,
-                caption=f"📸 Скриншот {count}/{REQUIRED_SCREENSHOTS} от @{user_data_store[user_id].get('username', 'unknown')}"
+                caption=f"📸 Скриншот комментария {count}/{REQUIRED_COMMENTS} от @{user_data_store[user_id].get('username', 'unknown')}"
             )
         else:
             user_data_store[user_id]['status'] = 'awaiting_approval'
             user_states[user_id] = 'awaiting_approval'
             
             await update.message.reply_text(
-                f"✅ Все {REQUIRED_SCREENSHOTS} скриншотов получены!\n"
+                f"✅ Все {REQUIRED_COMMENTS} скриншотов получены!\n"
                 "Ожидайте проверки администратором."
             )
             
-            # Notify admin with approval buttons
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
-                text=f"📋 Пользователь @{user_data_store[user_id].get('username', 'unknown')} прислал все {REQUIRED_SCREENSHOTS} скриншотов.\nГотов к проверке.",
-                reply_markup=admin_approval_keyboard(user_id)
+                text=f"📋 Пользователь @{user_data_store[user_id].get('username', 'unknown')} прислал все {REQUIRED_COMMENTS} скриншотов комментариев.\nГотов к проверке.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user_id}"),
+                     InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{user_id}")],
+                    [InlineKeyboardButton("💬 Комментарий", callback_data=f"comment_{user_id}")]
+                ])
             )
+    
+    elif state == 'waiting_rate_photo':
+        if user_id not in approved_users:
+            await update.message.reply_text("❌ Сначала выполните условие с комментариями.")
+            return
+        
+        photo = update.message.photo[-1]
+        user_data_store[user_id]['rate_photo'] = photo.file_id
+        user_states[user_id] = 'rate_done'
+        
+        await update.message.reply_text(
+            "⚠️ Сервера перегружены, ответ может быть задержан"
+        )
+        
+        await context.bot.send_photo(
+            chat_id=ADMIN_ID,
+            photo=photo.file_id,
+            caption=f"📸 Фото для рейта\n{get_user_info(update.effective_user)}",
+            reply_markup=rate_photo_keyboard(user_id)
+        )
     
     elif user_id == ADMIN_ID:
         pass
