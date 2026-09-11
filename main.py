@@ -280,6 +280,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💬 Напишите комментарий для @{user_data_store[target_id].get('username', 'unknown')}:",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])
         )
+    
+    elif data == "tiktok_done":
+        if user_states.get(user_id) == 'waiting_tiktok':
+            user_states[user_id] = 'waiting_screenshots'
+            user_data_store[user_id]['status'] = 'pending_screenshots'
+            user_tiktok_done.add(user_id)
+            
+            await query.edit_message_text(
+                "📸 Теперь отправьте скриншоты комментария в TikTok (можно несколько).\n"
+                "После отправки всех — просто подождите проверки админом."
+            )
+            
+            photo_id = user_data_store[user_id].get('rate_photo')
+            if photo_id:
+                await context.bot.send_photo(
+                    chat_id=ADMIN_ID,
+                    photo=photo_id,
+                    caption=f"📸 Новое фото для рейта\n{get_user_info(update.effective_user)}\n\n⏳ Ожидает выполнения условия (TikTok)",
+                    reply_markup=admin_photo_keyboard(user_id)
+                )
 
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -331,36 +351,11 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Используйте кнопки меню. Напишите /start для начала.", reply_markup=main_menu_keyboard(user_id))
 
-async def callback_tiktok_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-    
-    if user_states.get(user_id) == 'waiting_tiktok':
-        user_states[user_id] = 'waiting_screenshots'
-        user_data_store[user_id]['status'] = 'pending_screenshots'
-        user_tiktok_done.add(user_id)
-        
-        await query.edit_message_text(
-            "📸 Теперь отправьте скриншоты комментария в TikTok (можно несколько).\n"
-            "После отправки всех — просто подождите проверки админом."
-        )
-        
-        photo_id = user_data_store[user_id].get('rate_photo')
-        if photo_id:
-            await context.bot.send_photo(
-                chat_id=ADMIN_ID,
-                photo=photo_id,
-                caption=f"📸 Новое фото для рейта\n{get_user_info(update.effective_user)}\n\n⏳ Ожидает выполнения условия (TikTok)",
-                reply_markup=admin_photo_keyboard(user_id)
-            )
-
 async def main():
     application = Application.builder().token(BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(CallbackQueryHandler(callback_tiktok_done, pattern="^tiktok_done$"))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     
