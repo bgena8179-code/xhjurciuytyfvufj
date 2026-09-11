@@ -263,7 +263,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_id = int(data.split("_")[-1])
         approved_users.add(target_id)
         user_data_store[target_id]['status'] = 'approved'
-        await context.bot.send_message(target_id, "✅ Ваши комментарии одобрены! Теперь вы можете получать рейтинг. Нажмите «🎯 Рейт» и отправьте фото.")
+        await context.bot.send_message(target_id, "✅ Ваши комментарии одобрены! можете кидать фото для рейта /start")
         await query.edit_message_text("✅ Пользователь одобрен.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К списку", callback_data="admin_pending")]]))
     
     elif data.startswith("reject_"):
@@ -415,7 +415,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif state.startswith('writing_rate_'):
         target_id = int(state.split('_')[-1])
-        await context.bot.send_message(target_id, f"⭐ Ваша оценка от админа:\n\n{text}")
+        await context.bot.send_message(target_id, f"комент:\n\n{text}")
         user_states[user_id] = ''
         await update.message.reply_text("✅ Оценка отправлена.", reply_markup=main_menu_keyboard(user_id))
     
