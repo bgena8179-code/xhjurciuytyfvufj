@@ -187,10 +187,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data_store[user_id]['status'] = 'pending_comments'
             
             await query.edit_message_text(
-                f"📝 Условие для получения рейта:\n\n"
-                f"Оставьте {REQUIRED_COMMENTS} комментариев в TikTok/Instagram с рекламой бота.\n"
+                f"📝 Условие для получения доступа:\n\n"
+                f"Оставьте {REQUIRED_COMMENTS} комментариев в тик токе с рекламой бота. (пример: бот для рейта @ratepls_robot) \n"
                 f"Пришлите скриншоты каждого комментария (всего {REQUIRED_COMMENTS}).\n\n"
-                f"После проверки админом вам откроется доступ к рейту."
+                f"После проверки админом вам откроется доступ к боту."
             )
         else:
             user_states[user_id] = 'waiting_rate_photo'
